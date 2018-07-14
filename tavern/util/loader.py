@@ -70,10 +70,10 @@ class IncludeLoader(Reader, Scanner, Parser, RememberComposer, SafeConstructor, 
         Resolver.__init__(self)
 
         # Loaded components (e.g. stages)
-        self.loaded_stages = {}
+        self.loaded_components = {}
 
     def get_data(self):
-        self.loaded_stages = {}
+        self.loaded_components = {}
 
         return super(IncludeLoader, self).get_data()
 
@@ -96,47 +96,41 @@ def _get_yaml_filename(loader, node):
 def construct_include(loader, node):
     """Include file referenced at node."""
 
-    filename = _get_yaml_filename(loader, node)
-    with open(filename, 'r') as f:
-        return yaml.load(f, IncludeLoader)
-
-def construct_load(loader, node):
-    """ Load test sections from a referenced file.
-
-    These sections are only loaded; they are not constructed as part of the
-    loaded YAML document. They are available to be constructed on demand, e.g.
-    using `!stage`.
-    """
-
+    logger.debug("construct_include()")
     filename = _get_yaml_filename(loader, node)
     with open(filename, 'r') as f:
         doc = yaml.load(f, IncludeLoader)
-        if "stages" in doc:
-            for name, stage in doc["stages"].items():
-                logger.info("Loading stage: %s", name)
-                logger.debug("Loading stage [%s]: %s", name, stage)
-                loader.loaded_stages[name] = stage
+        logger.debug("include doc: %s", doc)
+        if "components" in doc:
+            for name, component in doc["components"].items():
+                logger.info("Loading component: %s", name)
+                logger.debug("Loading component [%s]: %s", name, component)
+                if "definition" in component:
+                    loader.loaded_components[name] = component
+                else:
+                    raise BadSchemaError(
+                        "{}: component must have 'definition': {}".format(filename, name))
 
-    return None
+            del doc["components"]
+        return doc
 
-def construct_stage(loader, node):
-    """ Construct a stage from previously loaded stage.
+def construct_component(loader, node):
+    """ Construct a component from previously loaded one.
     """
-    stage_name = str(loader.construct_scalar(node))
+    logger.debug("construct component from node: %s", node)
+    component_name = str(loader.construct_scalar(node))
     try:
-        stage = loader.loaded_stages[stage_name]
+        component = loader.loaded_components[component_name]
     except KeyError as e:
         logger.error("The following key does not exist: %s", e.args[0])
         raise BadSchemaError("Stage '{}' not loaded".format(stage_name))
 
-    return stage
+    return component["definition"]
 
 
 IncludeLoader.add_constructor("!include", construct_include)
 IncludeLoader.add_constructor("!uuid", makeuuid)
-
-IncludeLoader.add_constructor("!load", construct_load)
-IncludeLoader.add_constructor("!stage", construct_stage)
+IncludeLoader.add_constructor("!component", construct_component)
 
 
 class TypeSentinel(yaml.YAMLObject):

@@ -6,6 +6,7 @@ import yaml
 
 from contextlib2 import ExitStack
 from box import Box
+from copy import deepcopy
 
 from .util.general import load_global_config
 from .plugins import load_plugins
@@ -61,11 +62,15 @@ def run_test(in_file, test_spec, global_cfg):
         logger.warning("Empty test block in %s", in_file)
         return
 
+    available_stages = {}
     if test_spec.get("includes"):
         for included in test_spec["includes"]:
             if "variables" in included:
                 formatted_include = format_keys(included["variables"], {"tavern": tavern_box})
                 test_block_config["variables"].update(formatted_include)
+            if "stages" in included:
+                for stage in included["stages"]:
+                    available_stages[stage["id"]] = stage
 
     test_block_name = test_spec["test_name"]
 
@@ -75,6 +80,22 @@ def run_test(in_file, test_spec, global_cfg):
     logger.info("Running test : %s", test_block_name)
 
     with ExitStack() as stack:
+        # We need to get a final list of stages in the tests (some may be refs)
+        test_stages = []
+        for raw_stage in test_spec["stages"]:
+            stage = raw_stage
+            if "type" in stage:
+                if stage["type"] == "ref":
+                    ref_id = stage["ref"]
+                    if ref_id in available_stages:
+                        stage = deepcopy(available_stages[ref_id])
+                        logger.debug("found stage reference: %s", ref_id)
+                    else:
+                        logger.error("Skip stage: unknown stage referenced: %s", ref_id)
+                        continue
+            test_stages.append(stage)
+
+        test_spec["stages"] = test_stages
         sessions = get_extra_sessions(test_spec, test_block_config)
 
         for name, session in sessions.items():
@@ -82,7 +103,7 @@ def run_test(in_file, test_spec, global_cfg):
             stack.enter_context(session)
 
         # Run tests in a path in order
-        for stage in test_spec["stages"]:
+        for stage in test_stages:
             if stage.get('skip'):
                 continue
 
